@@ -27,19 +27,27 @@ import {
 // --------------------------------------------------------------------------
 // Configuration & Environment
 // --------------------------------------------------------------------------
+// 取得環境變數中的 API Key
 const getEnvApiKey = () => {
   try {
+    // 優先檢查標準的 process.env (Create React App / Webpack)
     if (typeof process !== 'undefined' && process.env?.REACT_APP_GEMINI_API_KEY) {
       return process.env.REACT_APP_GEMINI_API_KEY;
     }
-  } catch (e) {}
+    // 這裡移除了 import.meta 的檢查以避免在某些環境下的編譯錯誤
+    // 若您使用 Vite，請確保您的環境變數名稱正確並透過您專案的設定方式載入
+  } catch (e) {
+    // 忽略存取錯誤
+  }
   return '';
 };
 
 const ENV_API_KEY = getEnvApiKey();
 const GEMINI_MODEL = "gemini-1.5-flash";
 
+// --------------------------------------------------------------------------
 // Types
+// --------------------------------------------------------------------------
 interface ScriptSection {
   structure: string; 
   structureDesc?: string; 
@@ -58,18 +66,22 @@ interface ScriptResult {
   versionName: string;
 }
 
-// New Interface for Summary
 interface SourceSummary {
   overview: string;
   tags: string[];
 }
 
-// Helper to estimate reading time
+// --------------------------------------------------------------------------
+// Helper Functions
+// --------------------------------------------------------------------------
+
+// 估算語速 (約每秒 4.5 字)
 const estimateDuration = (text: string) => {
   const charCount = text.replace(/\s/g, '').length;
   return Math.ceil(charCount / 4.5);
 };
 
+// 格式化時間區間
 const formatTimeRange = (sections: ScriptSection[], currentIndex: number) => {
   let startTime = 0;
   for (let i = 0; i < currentIndex; i++) {
@@ -79,18 +91,28 @@ const formatTimeRange = (sections: ScriptSection[], currentIndex: number) => {
   return `${startTime}-${endTime}秒`;
 };
 
+// 生成複製文字 (符合 Excel/Sheet 格式)
 const generateCopyString = (result: ScriptResult) => {
   const headers = "結構\t時間佔比\t腳本/對白重點 (Audio)";
-  const versionInfo = `版本：${result.versionName} (${result.versionType})\n主題名稱：${result.title}\n重點：${result.theme}`;
+  
+  // 檔頭資訊：包含版本、標題與重點
+  const versionInfo = `版本：${result.versionName}\n主題名稱：${result.title}\n重點：${result.theme}`;
+  
+  // 表格內容
   const tableData = result.sections.map((s, idx) => {
       const structureFull = `${s.structure}${s.structureDesc ? ` (${s.structureDesc})` : ''}`;
       const timeRange = formatTimeRange(result.sections, idx);
+      // 處理換行符號，避免破壞 Excel 表格結構，改用 " | " 分隔
       const cleanAudio = s.content.replace(/\n/g, '  |  '); 
       return `${structureFull}\t${timeRange}\t${cleanAudio}`;
   }).join('\n');
+
   return `${versionInfo}\n\n${headers}\n${tableData}`;
 };
 
+// --------------------------------------------------------------------------
+// Main Component
+// --------------------------------------------------------------------------
 export default function App() {
   const [fileContent, setFileContent] = useState<string>('');
   const [fileName, setFileName] = useState<string>('');
@@ -147,15 +169,16 @@ export default function App() {
   // AI / MOCK LOGIC
   // --------------------------------------------------------------------------
 
+  // 產生模擬資料 (Demo 模式)
   const generateMockResult = () => {
-    // Mock Summary
+    // 模擬來源導覽
     const mockSummary: SourceSummary = {
       overview: "這段對話呈現了典型的「戀愛腦」與「人間清醒」之間的觀念衝突。主角 A 對於男性的普通社交行為（如說晚安）產生了過度的浪漫解讀，而朋友 B 則試圖用理性的角度戳破幻想，指出 A 的行為實際上更像是單方面的付出（工具人）。這段素材反映了現代交友中常見的模糊界線與自我投射心理。",
       tags: ["戀愛腦", "工具人", "社交錯覺", "人間清醒", "兩性互動", "暈船"]
     };
     setSourceSummary(mockSummary);
 
-    // Mock Scripts
+    // 模擬腳本內容
     const sectionsA: ScriptSection[] = [
       { structure: "起", structureDesc: "興奮暈船", content: `A：「天啊！那個超帥的男生昨天竟然跟我說晚安耶！他是不是喜歡我？」\n\nB：「他是有毛病吧？晚安就是想睡覺了，不然要給你看健檢報告嗎？」`, visual: "", duration: 10 },
       { structure: "承", structureDesc: "工具人行為", content: `B：「那他有買早餐給你嗎？」\n\nA：「沒有啊！但我有請他喝飲料、還有幫他叫車，因為他剛好口渴又沒錢嘛！」\n\nB：「...你這是做慈善吧？你是提款機嗎？」`, visual: "", duration: 15 },
@@ -163,7 +186,6 @@ export default function App() {
       { structure: "合", structureDesc: "無藥可救", content: `B：（對鏡頭）「有這種朋友，我該報警還是幫她掛號腦科？」\n\nA：「哎唷他又傳貼圖給我了！這是求婚暗示嗎？」`, visual: "", duration: 10 },
     ];
     
-    // ... rest of mock logic similar to previous ...
     const processMock = (type: 'A' | 'B' | 'Mix', name: string, title: string) => {
        const sections = type === 'B' ? sectionsA.map(s => ({...s, content: s.content.replace("A：", "A(尖叫)：")})) : sectionsA;
        const totalDuration = sections.reduce((acc, c) => acc + c.duration, 0);
@@ -186,6 +208,7 @@ export default function App() {
     setIsMock(true);
   };
 
+  // 呼叫 Gemini AI
   const generateAIResult = async (text: string) => {
     const prompt = `
       你是一個專業的短影音腳本師與內容分析師。請分析以下文字稿，完成兩個任務：
@@ -232,6 +255,10 @@ export default function App() {
       const data = await response.json();
       if (data.error) throw new Error(data.error.message);
       
+      if (!data.candidates || !data.candidates[0]?.content?.parts?.[0]?.text) {
+        throw new Error("AI 回傳資料異常，請重試");
+      }
+
       const rawText = data.candidates[0].content.parts[0].text;
       const jsonText = rawText.replace(/```json/g, '').replace(/```/g, '').trim();
       const parsed = JSON.parse(jsonText);
@@ -274,10 +301,11 @@ export default function App() {
     }
     setIsProcessing(true);
     setError(null);
-    setResults(null); // Clear previous results
+    setResults(null); 
     setSourceSummary(null);
 
     try {
+      // 若有設定 Key (長度大於 10) 則使用 AI，否則使用 Mock
       if (apiKey && apiKey.length > 10) {
         await generateAIResult(fileContent);
       } else {
@@ -309,7 +337,7 @@ export default function App() {
   const handleCopyAll = () => {
     if (!results) return;
     
-    // Include Summary in the copy
+    // 將來源導覽與三個版本的表格內容串接
     let summaryText = "";
     if (sourceSummary) {
         summaryText = `【來源導覽】\n摘要：${sourceSummary.overview}\n關鍵字：${sourceSummary.tags.join(', ')}\n\n========================================\n\n`;
