@@ -21,6 +21,7 @@
         body { font-family: 'Noto Sans TC', sans-serif; }
         .animate-in { animation: fadeIn 0.5s ease-out; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .fade-text { transition: opacity 0.3s ease; }
     </style>
 </head>
 <body class="bg-gray-900 text-gray-100 min-h-screen selection:bg-indigo-500 selection:text-white">
@@ -33,7 +34,7 @@
         const { useState, useEffect, useRef } = React;
 
         // --------------------------------------------------------------------------
-        // ICON COMPONENTS (使用 <g> 包裹多路徑 SVG 以相容 Babel 解析)
+        // ICON COMPONENTS
         // --------------------------------------------------------------------------
         const Icon = ({ path, size = 20, className = "" }) => (
             <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
@@ -57,21 +58,29 @@
             Instagram: <g><rect width="20" height="20" x="2" y="2" rx="5" ry="5"/><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"/><line x1="17.5" y1="6.5" x2="17.51" y2="6.5"/></g>,
             Files: <g><path d="M15.5 2H8.6c-.4 0-.8.2-1.1.5-.3.3-.5.7-.5 1.1v12.8c0 .4.2.8.5 1.1.3.3.7.5 1.1.5h9.8c.4 0 .8-.2 1.1-.5.3-.3.5-.7.5-1.1V6.5L15.5 2z"/><path d="M3 7.6v12.8c0 .4.2.8.5 1.1.3.3.7.5 1.1.5h9.8"/><path d="M15 2v5h5"/></g>,
             Table: <g><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="12" y1="3" x2="12" y2="21"/></g>,
-            Sparkles: <g><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/><path d="M5 3v4"/><path d="M9 5H5"/><path d="M19 15v4"/><path d="M23 17h-4"/></g>
+            Sparkles: <g><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/><path d="M5 3v4"/><path d="M9 5H5"/><path d="M19 15v4"/><path d="M23 17h-4"/></g>,
+            Cpu: <rect x="4" y="4" width="16" height="16" rx="2" ry="2" />,
+            CheckCircle: <g><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></g>
         };
 
         const LucideIcon = ({ name, size, className }) => (
-            <Icon path={icons[name]} size={size} className={className} />
+            <Icon path={icons[name] || icons['Info']} size={size} className={className} />
         );
 
         // --------------------------------------------------------------------------
         // CONFIGURATION
         // --------------------------------------------------------------------------
-        // ★★★ 關鍵修正：使用具體的穩定版本號，確保連線成功 ★★★
-        const GEMINI_MODEL = "gemini-1.5-flash-002"; 
-        
-        // 如果你想把 API Key 寫死在檔案裡方便分享 (不建議公開到 GitHub)，可以填在下方引號中
         const HARDCODED_API_KEY = ""; 
+        
+        // 備援模型清單 (優先順序)
+        const FALLBACK_MODELS = [
+            "gemini-1.5-flash",
+            "gemini-1.5-flash-latest",
+            "gemini-1.5-flash-001", 
+            "gemini-1.5-flash-002",
+            "gemini-1.5-pro",
+            "gemini-1.5-pro-latest"
+        ];
 
         // --------------------------------------------------------------------------
         // HELPER FUNCTIONS
@@ -111,21 +120,20 @@
             const [fileName, setFileName] = useState('');
             const [isDragging, setIsDragging] = useState(false);
             const [isProcessing, setIsProcessing] = useState(false);
+            const [processingStatus, setProcessingStatus] = useState(''); // 新增: 顯示當前嘗試的模型
             const [activeVersion, setActiveVersion] = useState('A');
             
-            // 環境變數取得 (Safe check without optional chaining)
             const getEnvApiKey = () => {
                 try {
                     if (typeof process !== 'undefined' && process.env && process.env.REACT_APP_GEMINI_API_KEY) {
                         return process.env.REACT_APP_GEMINI_API_KEY;
                     }
-                } catch (e) {
-                    // Ignore errors
-                }
+                } catch (e) {}
                 return '';
             };
 
             const [apiKey, setApiKey] = useState(HARDCODED_API_KEY || getEnvApiKey());
+            const [selectedModel, setSelectedModel] = useState("gemini-1.5-flash");
             const [showSettings, setShowSettings] = useState(false);
             
             const [results, setResults] = useState(null);
@@ -171,8 +179,8 @@
                 setIsMock(true);
             };
 
-            // AI Generator
-            const generateAIResult = async (text) => {
+            // Single API Call Function
+            const callGeminiApi = async (modelName, text) => {
                 const prompt = `
                     你是一個專業的短影音腳本師與內容分析師。請分析以下文字稿，完成兩個任務：
                     
@@ -208,54 +216,79 @@
                     }
                 `;
 
-                try {
-                    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
-                    });
+                const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+                });
 
-                    const data = await response.json();
-                    if (data.error) throw new Error(data.error.message);
-                    
-                    // 修正: 移除 ?. 語法，改用傳統 && 檢查，確保在所有瀏覽器/編譯器下相容
-                    if (!data.candidates || !data.candidates[0] || !data.candidates[0].content || !data.candidates[0].content.parts || !data.candidates[0].content.parts[0] || !data.candidates[0].content.parts[0].text) {
-                        throw new Error("AI 回傳資料異常，請重試");
-                    }
-
-                    const rawText = data.candidates[0].content.parts[0].text;
-                    const jsonText = rawText.replace(/```json/g, '').replace(/```/g, '').trim();
-                    const parsed = JSON.parse(jsonText);
-
-                    setSourceSummary(parsed.source_summary);
-
-                    const processVersion = (v, type, name) => {
-                        const sections = v.sections.map((s) => ({
-                            ...s,
-                            duration: estimateDuration(s.content)
-                        }));
-                        return {
-                            title: v.title,
-                            theme: v.theme,
-                            suggestedTitles: v.suggested_titles || [],
-                            versionType: type,
-                            versionName: name,
-                            sections,
-                            totalDuration: sections.reduce((acc, cur) => acc + cur.duration, 0)
-                        };
-                    };
-
-                    setResults({
-                        A: processVersion(parsed.scripts.A, 'A', '版本一：對話情境版'),
-                        B: processVersion(parsed.scripts.B, 'B', '版本二：爆款吐槽版'),
-                        Mix: processVersion(parsed.scripts.Mix, 'Mix', '版本三：平衡綜合版')
-                    });
-                    setIsMock(false);
-
-                } catch (e) {
-                    console.error(e);
-                    throw new Error(e.message || "AI 生成失敗");
+                const data = await response.json();
+                
+                if (data.error) {
+                    throw new Error(data.error.message || "API Error");
                 }
+                
+                if (!data.candidates || !data.candidates[0] || !data.candidates[0].content || !data.candidates[0].content.parts || !data.candidates[0].content.parts[0] || !data.candidates[0].content.parts[0].text) {
+                    throw new Error("AI 回傳資料異常，請重試");
+                }
+
+                return data;
+            };
+
+            // AI Generator with Retry Logic
+            const generateAIResult = async (text) => {
+                const modelsToTry = [selectedModel, ...FALLBACK_MODELS.filter(m => m !== selectedModel)];
+                
+                let lastError = null;
+
+                for (const model of modelsToTry) {
+                    try {
+                        setProcessingStatus(`正在嘗試連線模型：${model}...`);
+                        const data = await callGeminiApi(model, text);
+                        
+                        const rawText = data.candidates[0].content.parts[0].text;
+                        const jsonText = rawText.replace(/```json/g, '').replace(/```/g, '').trim();
+                        const parsed = JSON.parse(jsonText);
+
+                        setSourceSummary(parsed.source_summary);
+
+                        const processVersion = (v, type, name) => {
+                            const sections = v.sections.map((s) => ({
+                                ...s,
+                                duration: estimateDuration(s.content)
+                            }));
+                            return {
+                                title: v.title,
+                                theme: v.theme,
+                                suggestedTitles: v.suggested_titles || [],
+                                versionType: type,
+                                versionName: name,
+                                sections,
+                                totalDuration: sections.reduce((acc, cur) => acc + cur.duration, 0)
+                            };
+                        };
+
+                        setResults({
+                            A: processVersion(parsed.scripts.A, 'A', '版本一：對話情境版'),
+                            B: processVersion(parsed.scripts.B, 'B', '版本二：爆款吐槽版'),
+                            Mix: processVersion(parsed.scripts.Mix, 'Mix', '版本三：平衡綜合版')
+                        });
+                        setIsMock(false);
+                        
+                        if (model !== selectedModel) {
+                            console.log(`Fallback success with: ${model}`);
+                        }
+                        
+                        return;
+
+                    } catch (e) {
+                        console.warn(`Model ${model} failed:`, e.message);
+                        lastError = e;
+                        continue;
+                    }
+                }
+
+                throw lastError || new Error("所有模型嘗試皆失敗，請檢查 API Key 或網路連線");
             };
 
             const handleAnalyze = async () => {
@@ -264,6 +297,7 @@
                     return;
                 }
                 setIsProcessing(true);
+                setProcessingStatus('初始化 AI...');
                 setError(null);
                 setResults(null); 
                 setSourceSummary(null);
@@ -279,6 +313,7 @@
                     setError(err.message || "處理時發生錯誤");
                 } finally {
                     setIsProcessing(false);
+                    setProcessingStatus('');
                 }
             };
 
@@ -390,12 +425,14 @@
                         {showSettings && (
                             <div className="bg-gray-800 border-b border-gray-700 p-4 animate-in">
                                 <div className="max-w-6xl mx-auto flex flex-col md:flex-row gap-6">
-                                    <div className="flex-1 w-full space-y-3">
-                                        <div className="flex items-center gap-2 text-indigo-400 mb-1">
-                                            <LucideIcon name="Key" size={16} />
-                                            <label className="text-sm font-bold">Google Gemini API Key</label>
-                                        </div>
-                                        <div className="relative">
+                                    <div className="flex-1 w-full space-y-4">
+                                        
+                                        {/* API Key Input */}
+                                        <div className="space-y-1">
+                                            <div className="flex items-center gap-2 text-indigo-400 mb-1">
+                                                <LucideIcon name="Key" size={16} />
+                                                <label className="text-sm font-bold">Google Gemini API Key</label>
+                                            </div>
                                             <input 
                                                 type="password" 
                                                 value={apiKey}
@@ -404,9 +441,39 @@
                                                 className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-sm focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all placeholder:text-gray-600"
                                             />
                                         </div>
-                                        <p className="text-xs text-gray-500">
-                                            若未輸入 Key，系統將使用 <strong>演示模式 (Mock Data)</strong> 來展示介面效果。
-                                        </p>
+
+                                        {/* Model Selector */}
+                                        <div className="space-y-1">
+                                            <div className="flex items-center gap-2 text-pink-400 mb-1">
+                                                <LucideIcon name="Cpu" size={16} />
+                                                <label className="text-sm font-bold">選擇 AI 模型 (支援自動候補)</label>
+                                            </div>
+                                            <select 
+                                                value={selectedModel}
+                                                onChange={(e) => setSelectedModel(e.target.value)}
+                                                className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-sm focus:outline-none focus:border-pink-500 focus:ring-1 focus:ring-pink-500 transition-all text-gray-200"
+                                            >
+                                                <option value="gemini-1.5-flash">Gemini 1.5 Flash (推薦/穩定)</option>
+                                                <option value="gemini-1.5-flash-latest">Gemini 1.5 Flash (最新版)</option>
+                                                <option value="gemini-1.5-flash-001">Gemini 1.5 Flash 001</option>
+                                                <option value="gemini-1.5-flash-002">Gemini 1.5 Flash 002</option>
+                                                <option value="gemini-1.5-flash-8b">Gemini 1.5 Flash 8B (極速)</option>
+                                                <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
+                                            </select>
+                                            <p className="text-xs text-gray-500 mt-1">
+                                                若選定的模型無法連線 (404/400)，系統將自動嘗試其他穩定版本。
+                                            </p>
+                                        </div>
+
+                                    </div>
+                                    
+                                    <div className="md:w-1/3 bg-gray-700/30 p-4 rounded-lg border border-gray-700/50 text-xs text-gray-400 space-y-2">
+                                        <h4 className="font-bold text-gray-300 flex items-center gap-2">
+                                            <LucideIcon name="Shield" size={14} className="text-emerald-400" />
+                                            智慧連線
+                                        </h4>
+                                        <p>已啟用自動候補機制。</p>
+                                        <p>系統會優先使用您選擇的模型，失敗時自動切換至其他可用版本，確保服務不中斷。</p>
                                     </div>
                                 </div>
                             </div>
@@ -482,7 +549,7 @@
                                         {isProcessing ? (
                                             <>
                                                 <LucideIcon name="RefreshCw" size={20} className="animate-spin mr-2" />
-                                                正在分析與生成...
+                                                <span className="fade-text">{processingStatus || "正在分析與生成..."}</span>
                                             </>
                                         ) : (
                                             <>
